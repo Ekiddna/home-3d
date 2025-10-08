@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Robust Three.js Model Viewer</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            user-select: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+<div id="info">
+    One Finger: Rotate Camera View | Two Finger: Pan | Pinch/Expand: Zoom
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+<script>
+    const GLTF_FILE = 'result.gltf';
+    const BACKGROUND_COLOR = 0xdddddd;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(BACKGROUND_COLOR);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 10000);
+    camera.position.set(0.3, 0.3, 0.5);
+    camera.up.set(0, 1, 0);
+
+    const renderer = new THREE.WebGLRenderer({antialias:true, logarithmicDepthBuffer:true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    directionalLight.position.set(5, 10, 5);
+    scene.add(directionalLight);
+
+    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+    directionalLight2.position.set(-5, 5, -5);
+    scene.add(directionalLight2);
+
+    // Controls object
+    const controls = {
+        lookTarget: new THREE.Vector3(0,0,-5), // Point camera is looking at
+
+        minDistance: 0.1,
+        maxDistance: 100,
+        rotateSpeed: 0.003,
+        panSpeed: 1.0,
+        zoomSpeed: 3,
+        enableDamping: true,
+        dampingFactor: 0.1,
+
+        isRotating: false,
+        isPanning: false,
+        lastMouseX: 0,
+        lastMouseY: 0,
+
+        yaw: 0,
+        yawDelta: 0,
+        pitch: 0,
+        pitchDelta: 0,
+        panOffset: new THREE.Vector3(),
+        scale: 1,
+		
+		isTouching: false,
+		touchPoints: [],
+		initialPinchDistance: 0,
+
+        update: function() {
+            if(this.enableDamping) {
+                this.yaw += this.yawDelta * this.dampingFactor;
+                this.pitch += this.pitchDelta * this.dampingFactor;
+
+                this.yawDelta *= (1 - this.dampingFactor);
+                this.pitchDelta *= (1 - this.dampingFactor);
+
+                camera.position.add(this.panOffset.clone().multiplyScalar(this.dampingFactor));
+                this.panOffset.multiplyScalar(1 - this.dampingFactor);
+            } else {
+                this.yaw += this.yawDelta;
+                this.pitch += this.pitchDelta;
+
+                this.yawDelta = 0;
+                this.pitchDelta = 0;
+
+                camera.position.add(this.panOffset);
+                this.panOffset.set(0,0,0);
+            }
+
+            // Clamp pitch to prevent camera flipping
+            this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch));
+
+            // Calculate look target based on yaw and pitch
+            const lookDistance = 5;
+            this.lookTarget.set(
+                Math.sin(this.yaw) * Math.cos(this.pitch) * lookDistance,
+                Math.sin(this.pitch) * lookDistance,
+                -Math.cos(this.yaw) * Math.cos(this.pitch) * lookDistance
+            );
+            this.lookTarget.add(camera.position);
+
+            camera.lookAt(this.lookTarget);
+        }
+    };
+
+    // Mouse events
+    renderer.domElement.addEventListener('mousedown', e => {
+        e.preventDefault();
+        if(e.button === 0) controls.isRotating = true; // left click
+        else if(e.button === 2) controls.isPanning = true; // right click
+        controls.lastMouseX = e.clientX;
+        controls.lastMouseY = e.clientY;
+    });
+
+    renderer.domElement.addEventListener('mousemove', e => {
+        if(controls.isRotating) {
+            const deltaX = e.clientX - controls.lastMouseX;
+            const deltaY = e.clientY - controls.lastMouseY;
+
+            // Rotate camera view (first-person style)
+            controls.yawDelta -= deltaX * controls.rotateSpeed;
+            controls.pitchDelta -= deltaY * controls.rotateSpeed;
+
+            controls.lastMouseX = e.clientX;
+            controls.lastMouseY = e.clientY;
+        }
+        else if(controls.isPanning) {
+            const deltaX = e.clientX - controls.lastMouseX;
+            const deltaY = e.clientY - controls.lastMouseY;
+
+            const offset = new THREE.Vector3();
+            offset.copy(camera.position).sub(controls.lookTarget);
+            let targetDistance = offset.length();
+
+            targetDistance *= Math.tan((camera.fov / 2) * Math.PI / 180);
+
+            // Calculate pan vectors
+            const panLeft = new THREE.Vector3();
+            const panUp = new THREE.Vector3();
+            const v = new THREE.Vector3();
+
+            v.setFromMatrixColumn(camera.matrix, 0); // X column
+            panLeft.copy(v).multiplyScalar(-2 * deltaX * targetDistance / renderer.domElement.clientHeight * controls.panSpeed);
+
+            v.setFromMatrixColumn(camera.matrix, 1); // Y column
+            panUp.copy(v).multiplyScalar(2 * deltaY * targetDistance / renderer.domElement.clientHeight * controls.panSpeed);
+
+            controls.panOffset.add(panLeft).add(panUp);
+
+            controls.lastMouseX = e.clientX;
+            controls.lastMouseY = e.clientY;
+        }
+    });
+
+    renderer.domElement.addEventListener('mouseup', e => {
+        controls.isRotating = false;
+        controls.isPanning = false;
+    });
+
+    // Zoom with wheel - move camera forward/backward
+    renderer.domElement.addEventListener('wheel', e => {
+        e.preventDefault();
+
+        const zoomSpeed = 0.1;
+
+        // Get forward direction
+        const forward = new THREE.Vector3();
+        forward.subVectors(controls.lookTarget, camera.position).normalize();
+
+        const delta = e.deltaY > 0 ? -1 : 1;
+
+        // Move camera forward/backward
+        const movement = forward.multiplyScalar(delta * zoomSpeed);
+        camera.position.add(movement);
+
+    }, { passive: false });
+
+	// --- Touch events ---
+
+	renderer.domElement.addEventListener('touchstart', e => {
+		e.preventDefault();
+		controls.isTouching = true;
+		controls.touchPoints = e.touches;
+
+		if (e.touches.length === 2) {
+			// Pinch start
+			const dx = e.touches[0].clientX - e.touches[1].clientX;
+			const dy = e.touches[0].clientY - e.touches[1].clientY;
+			controls.initialPinchDistance = Math.sqrt(dx * dx + dy * dy);
+		}
+	}, { passive: false });
+
+	renderer.domElement.addEventListener('touchmove', e => {
+		e.preventDefault();
+
+		const touches = e.touches;
+
+		if (touches.length === 1 && controls.isTouching) {
+			// Single touch: Rotation/Look
+			const touch = touches[0];
+			const lastTouchX = controls.touchPoints.length > 0 ? controls.touchPoints[0].clientX : touch.clientX;
+			const lastTouchY = controls.touchPoints.length > 0 ? controls.touchPoints[0].clientY : touch.clientY;
+
+			const deltaX = touch.clientX - lastTouchX;
+			const deltaY = touch.clientY - lastTouchY;
+
+			// Apply rotation, similar to mousemove (left click)
+			controls.yawDelta -= deltaX * controls.rotateSpeed * 1.5; // Slightly increased sensitivity for touch
+			controls.pitchDelta -= deltaY * controls.rotateSpeed * 1.5;
+
+		} else if (touches.length === 2 && controls.isTouching) {
+			// Two touches: Pan or Pinch Zoom
+			const touch1 = touches[0];
+			const touch2 = touches[1];
+			const lastTouch1X = controls.touchPoints[0].clientX;
+			const lastTouch1Y = controls.touchPoints[0].clientY;
+			const lastTouch2X = controls.touchPoints[1].clientX;
+			const lastTouch2Y = controls.touchPoints[1].clientY;
+
+			// Pan: Use the movement of the *centroid* (average of the two touches)
+			const centerCurrentX = (touch1.clientX + touch2.clientX) / 2;
+			const centerCurrentY = (touch1.clientY + touch2.clientY) / 2;
+			const centerLastX = (lastTouch1X + lastTouch2X) / 2;
+			const centerLastY = (lastTouch1Y + lastTouch2Y) / 2;
+
+			const deltaXPan = centerCurrentX - centerLastX;
+			const deltaYPan = centerCurrentY - centerLastY;
+
+			// Calculate pan movement, similar to mousemove (right click)
+			const offset = new THREE.Vector3();
+			offset.copy(camera.position).sub(controls.lookTarget);
+			let targetDistance = offset.length();
+			targetDistance *= Math.tan((camera.fov / 2) * Math.PI / 180);
+
+			const panLeft = new THREE.Vector3();
+			const panUp = new THREE.Vector3();
+			const v = new THREE.Vector3();
+
+			v.setFromMatrixColumn(camera.matrix, 0); // X column
+			panLeft.copy(v).multiplyScalar(-2 * deltaXPan * targetDistance / renderer.domElement.clientHeight * controls.panSpeed);
+
+			v.setFromMatrixColumn(camera.matrix, 1); // Y column
+			panUp.copy(v).multiplyScalar(2 * deltaYPan * targetDistance / renderer.domElement.clientHeight * controls.panSpeed);
+
+			controls.panOffset.add(panLeft).add(panUp);
+
+
+			// Pinch Zoom
+			const dx = touch1.clientX - touch2.clientX;
+			const dy = touch1.clientY - touch2.clientY;
+			const currentPinchDistance = Math.sqrt(dx * dx + dy * dy);
+
+			const deltaPinch = currentPinchDistance - controls.initialPinchDistance;
+
+			// Adjust zoom based on pinch change
+			if (Math.abs(deltaPinch) > 5) { // Threshold to prevent accidental zoom
+				const zoomAmount = deltaPinch * 0.005; // Zoom factor
+
+				// Get forward direction
+				const forward = new THREE.Vector3();
+				forward.subVectors(controls.lookTarget, camera.position).normalize();
+
+				// Move camera forward/backward (zoom)
+				const movement = forward.multiplyScalar(zoomAmount * controls.zoomSpeed);
+				camera.position.add(movement);
+
+				// Update initial pinch distance to current for smoother scaling
+				controls.initialPinchDistance = currentPinchDistance;
+			}
+		}
+
+		// Update touch points for next move
+		controls.touchPoints = touches;
+
+	}, { passive: false });
+
+	renderer.domElement.addEventListener('touchend', e => {
+		controls.isTouching = false;
+		controls.touchPoints = e.touches; // Update remaining touches
+
+		// If all touches are gone, reset state
+		if (e.touches.length === 0) {
+			controls.isRotating = false;
+			controls.isPanning = false;
+		}
+	});
+
+	renderer.domElement.addEventListener('touchcancel', e => {
+		controls.isTouching = false;
+		controls.touchPoints = [];
+	});
+
+    // Disable context menu on right-click
+    renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+    // GLTF loading
+    const gltfLoader = new THREE.GLTFLoader();
+    gltfLoader.load(
+        GLTF_FILE,
+        gltf => {
+            const object = gltf.scene;
+
+            // Center model
+            const box = new THREE.Box3().setFromObject(object);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+
+            object.position.sub(center); // center model to origin
+
+            // Camera positioning
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+            cameraZ *= 0.1; // padding
+
+            camera.position.set(cameraZ, cameraZ * 0.7, cameraZ);
+            
+            // Calculate initial yaw and pitch to look at origin
+            const dirToOrigin = new THREE.Vector3(0, 0, 0).sub(camera.position).normalize();
+            controls.yaw = Math.atan2(dirToOrigin.x, -dirToOrigin.z) + Math.PI;
+            controls.pitch = Math.asin(dirToOrigin.y);
+
+            controls.lookTarget.set(0, 0, 0);
+            camera.lookAt(controls.lookTarget);
+
+            scene.add(object);
+
+            console.log('GLTF Model loaded successfully!');
+        },
+        xhr => {
+            console.log((xhr.loaded / xhr.total * 100) + '% loaded (GLTF)');
+        },
+        error => {
+            console.error('Error loading GLTF:', error);
+        }
+    );
+
+    // Animation loop
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // Handle resizing
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth/window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+</script>
+
+</body>
+</html>
