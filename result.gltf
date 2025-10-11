@@ -16395,7 +16395,7 @@
 	"buffers":[
 		{
 			"byteLength":2056072,
-			"uri":"test.bin"
+			"uri":"result.bin"
 		}
 	]
 }
