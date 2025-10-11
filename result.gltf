@@ -299,11 +299,27 @@
 				282,
 				283,
 				284,
-				285
+				285,
+				286,
+				287,
+				288,
+				289
 			]
 		}
 	],
 	"nodes":[
+		{
+			"name":"IfcProject/KIDD BOLAND.001"
+		},
+		{
+			"name":"IfcBuildingStorey/GROUND.001"
+		},
+		{
+			"name":"IfcProject/KIDD BOLAND.002"
+		},
+		{
+			"name":"IfcBuildingStorey/GROUND.002"
+		},
 		{
 			"name":"IfcProject/KIDD BOLAND"
 		},
